@@ -88,3 +88,60 @@ Clarinet.test({
         assertEquals(donorInfo['total-donated'], types.uint(1000));
     }
 });
+
+Clarinet.test({
+    name: "Test fund distribution",
+    async fn(chain: Chain, accounts: Map<string, Account>) {
+        const deployer = accounts.get('deployer')!;
+        const applicant = accounts.get('wallet_1')!;
+        const donor = accounts.get('wallet_2')!;
+        
+        // Setup: Create scholarship and fund it
+        let setup = chain.mineBlock([
+            Tx.contractCall('bright-dao', 'create-scholarship', [
+                types.ascii("Test Scholarship"),
+                types.uint(1000),
+                types.ascii("Test criteria"),
+                types.uint(100)
+            ], deployer.address),
+            Tx.contractCall('bright-dao', 'donate-to-fund', [
+                types.uint(1000)
+            ], donor.address)
+        ]);
+        
+        // Apply for scholarship
+        let application = chain.mineBlock([
+            Tx.contractCall('bright-dao', 'apply-for-scholarship', [
+                types.uint(1),
+                types.ascii("Test documents")
+            ], applicant.address)
+        ]);
+        
+        // Approve application
+        let approval = chain.mineBlock([
+            Tx.contractCall('bright-dao', 'approve-application', [
+                types.uint(1)
+            ], deployer.address)
+        ]);
+        
+        // Distribute funds
+        let distribution = chain.mineBlock([
+            Tx.contractCall('bright-dao', 'distribute-funds', [
+                types.uint(1),
+                types.ascii("0x1234567890abcdef")
+            ], deployer.address)
+        ]);
+        
+        distribution.receipts[0].result.expectOk().expectUint(1);
+        
+        // Verify distribution
+        let distributionInfo = chain.mineBlock([
+            Tx.contractCall('bright-dao', 'get-distribution', [
+                types.uint(1)
+            ], deployer.address)
+        ]);
+        
+        const distInfo = distributionInfo.receipts[0].result.expectOk().expectSome();
+        assertEquals(distInfo['status'], types.ascii("completed"));
+    }
+});
