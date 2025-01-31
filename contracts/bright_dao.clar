@@ -8,8 +8,9 @@
 (define-constant err-already-exists (err u102))
 (define-constant err-insufficient-funds (err u103))
 (define-constant err-not-eligible (err u104))
+(define-constant err-payment-failed (err u105))
 
-;; Data Variables
+;; Data Variables 
 (define-data-var dao-name (string-ascii 50) "BrightDAO")
 (define-data-var total-funds uint u0)
 
@@ -21,7 +22,8 @@
         amount: uint,
         active: bool,
         criteria: (string-ascii 500),
-        deadline: uint
+        deadline: uint,
+        distributed: bool
     }
 )
 
@@ -31,7 +33,8 @@
         scholarship-id: uint,
         applicant: principal,
         status: (string-ascii 20),
-        documents: (string-ascii 500)
+        documents: (string-ascii 500),
+        payout-txid: (optional (string-ascii 64))
     }
 )
 
@@ -42,6 +45,20 @@
         last-donation: uint
     }
 )
+
+;; Funding Distribution
+(define-map fund-distributions
+    { distribution-id: uint }
+    {
+        scholarship-id: uint,
+        recipient: principal,
+        amount: uint,
+        status: (string-ascii 20),
+        timestamp: uint
+    }
+)
+
+(define-data-var total-distributions uint u0)
 
 ;; Public Functions
 (define-public (create-scholarship (name (string-ascii 100)) (amount uint) (criteria (string-ascii 500)) (deadline uint))
@@ -55,7 +72,8 @@
                         amount: amount,
                         active: true,
                         criteria: criteria,
-                        deadline: deadline
+                        deadline: deadline,
+                        distributed: false
                     }
                 )
                 (var-set total-scholarships scholarship-id)
@@ -79,7 +97,8 @@
                     scholarship-id: scholarship-id,
                     applicant: tx-sender,
                     status: "pending",
-                    documents: documents
+                    documents: documents,
+                    payout-txid: none
                 }
             )
             (var-set total-applications application-id)
@@ -124,6 +143,42 @@
     ))
 )
 
+(define-public (distribute-funds (application-id uint) (txid (string-ascii 64)))
+    (let (
+        (application (unwrap! (map-get? applications {application-id: application-id}) err-not-found))
+        (scholarship (unwrap! (map-get? scholarships {scholarship-id: (get scholarship-id application)}) err-not-found))
+        (distribution-id (+ (var-get total-distributions) u1))
+    )
+    (if (and (is-eq tx-sender contract-owner) 
+             (is-eq (get status application) "approved")
+             (not (get distributed scholarship)))
+        (begin
+            (map-set fund-distributions
+                { distribution-id: distribution-id }
+                {
+                    scholarship-id: (get scholarship-id application),
+                    recipient: (get applicant application),
+                    amount: (get amount scholarship),
+                    status: "completed",
+                    timestamp: block-height
+                }
+            )
+            (map-set applications
+                { application-id: application-id }
+                (merge application { payout-txid: (some txid) })
+            )
+            (map-set scholarships
+                { scholarship-id: (get scholarship-id application) }
+                (merge scholarship { distributed: true })
+            )
+            (var-set total-distributions distribution-id)
+            (var-set total-funds (- (var-get total-funds) (get amount scholarship)))
+            (ok distribution-id)
+        )
+        err-payment-failed
+    ))
+)
+
 ;; Read Only Functions
 (define-read-only (get-scholarship (scholarship-id uint))
     (ok (map-get? scholarships {scholarship-id: scholarship-id}))
@@ -135,6 +190,10 @@
 
 (define-read-only (get-donor-info (donor-id principal))
     (ok (map-get? donors {donor-id: donor-id}))
+)
+
+(define-read-only (get-distribution (distribution-id uint))
+    (ok (map-get? fund-distributions {distribution-id: distribution-id}))
 )
 
 ;; Initialize Contract
